@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+
+from picamera2 import Picamera2
+import cv2
+import numpy as np
+import requests
+from gpiozero import Servo
+from time import sleep
+
+def send_image_to_server(image_path, server_url):
+    """
+    Sends an image to the server.
+    
+    :param image_path: Path to the image file to be sent.
+    :param server_url: URL of the server endpoint.
+    """
+    try:
+        with open(image_path, 'rb') as image_file:
+            files = {'file': ('filename.jpg', image_file, 'image/jpeg')}
+            response = requests.post(server_url, files=files)
+            if response.status_code == 200:
+                print("Image uploaded successfully:", response.json())
+                return response.json().get("waste_type", "unknown")
+            else:
+                print(f"Failed to upload image. Status code: {response.status_code}")
+                print("Response:", response.text)
+                return "unknown"
+    except FileNotFoundError:
+        print("Error: The specified image file was not found.")
+        return "unknown"
+    except requests.RequestException as e:
+        print("Error occurred while sending the request:", e)
+        return "unknown"
+
+def rotate_servo(waste_type):
+    """Rotates the servo motor based on the detected waste type."""
+    servo = Servo(17)  # GPIO pin 17 for servo control
+    if waste_type == "Glass":
+        print("Moving to Glass position (left extreme)")
+        servo.value = -1  # Move to left extreme (0°)
+    elif waste_type == "Metal":
+        print("Moving to Metal position (slightly left)")
+        servo.value = -0.8  # Slightly left (around 45°)
+    elif waste_type == "Paper":
+        print("Moving to Paper position (centered or slightly right)")
+        servo.value = 0.5  # Centered (90°)
+    elif waste_type == "Plastic":
+        print("Moving to Plastic position (right extreme)")
+        servo.value = 1  # Move to right extreme (135°)
+    else:
+        print("Unknown waste type. No movement.")
+    sleep(2)
+    servo.value = None  # Stop the servo
+
+def capture_from_camera():
+    """Function to open the camera and capture an image."""
+    picam2 = Picamera2()
+    picam2.start()
+    print("Press 'c' to capture the image or 'q' to quit.")
+    captured_frame = None
+    while True:
+        frame = picam2.capture_array()
+        cv2.imshow("PiCamera2 Frame", frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('c'):
+            print("Image captured!")
+            save_path = "//home//prajwal//AI_Based_Dry_Waste_Segregator//captured_image.jpg"
+            cv2.imwrite(save_path, frame)
+            print(f"Image saved as {save_path}")
+            waste_type = send_image_to_server(save_path, "https://vsfndkhj-8000.inc1.devtunnels.ms/upload")
+            rotate_servo(waste_type)
+            break
+        elif key == ord('q'):
+            print("Exiting without capturing.")
+            break
+    cv2.destroyAllWindows()
+    picam2.stop()
+    return captured_frame
+
+def load_image(image_path):
+    """Function to load and display an image from a file path."""
+    print(f"Loading image from {image_path}...")
+    image = cv2.imread(image_path)
+    if image is not None:
+        cv2.imshow("Uploaded Image", image)
+        print("Press any key to close the image.")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        waste_type = send_image_to_server(image_path, "https://vsfndkhj-8000.inc1.devtunnels.ms/upload")
+        rotate_servo(waste_type)
+    else:
+        print("Unable to load the image. Please check the file path.")
+
+if __name__ == "__main__":
+    print("Choose an option:")
+    print("1. Open the camera and capture an image")
+    print("2. Upload an image by specifying the file path")
+    choice = input("Enter your choice (1/2): ")
+    if choice == '1':
+        captured_image = capture_from_camera()
+    elif choice == '2':
+        image_path = input("Enter the image file path (e.g., 'm1.jpeg'): ")
+        load_image(image_path)
+    else:
+        print("Invalid choice. Exiting.")
